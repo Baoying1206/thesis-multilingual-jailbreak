@@ -1,0 +1,173 @@
+# Multilingual Jailbreak Disparities in Large Language Models
+### A Representation-Space Analysis and Safety Alignment Approach
+
+> Master's Thesis — Stockholm University, Department of Computer and Systems Sciences (DSV)
+
+---
+
+## Overview
+
+Large language models (LLMs) are significantly more vulnerable to jailbreak attacks in non-English languages than in English. This project investigates *why* this disparity exists at the representation level, and proposes an inference-time intervention to mitigate it — without retraining the model.
+
+The core hypothesis is that **non-English prompts fail to sufficiently activate toxic concepts** in the model's internal representation space, leading to weaker separation between harmful and harmless content, and ultimately higher jailbreak success rates.
+
+This work bridges two recent findings:
+- **JBShield** (USENIX Security '25): jailbreaks suppress toxic concept activation and introduce a jailbreak concept in representation space
+- **Refusal Direction is Universal** (NeurIPS '25): refusal directions generalise across languages, but harmful/harmless embedding separation degrades in non-English settings
+
+---
+
+## Research Questions
+
+**RQ1 — Phenomenon**
+> Does the separation between harmful and harmless representations in LLMs vary systematically across languages?
+
+**RQ2 — Mechanism**
+> Is toxic concept activation strength weaker in non-English languages, and how does it correlate with representation separation?
+
+**RQ3 — Causal Validation**
+> Can toxic concept activation strength explain cross-lingual differences in jailbreak success rates?
+
+**RQ4 — Solution**
+> Can a language-adaptive toxic concept enhancement at inference time effectively reduce jailbreak success rates in non-English languages without degrading normal response quality?
+
+---
+
+## Experimental Design
+
+```
+RQ1 → Silhouette Score analysis across languages
+  ↓
+RQ2 → Toxic concept activation extraction across languages
+  ↓
+RQ3 → Correlation: activation ↔ separation ↔ jailbreak success rate
+  ↓
+RQ4 → Language-adaptive concept enhancement + evaluation
+```
+
+### Experiment 1 — Cross-lingual Representation Separation (RQ1)
+
+Extract hidden states from a target LLM for harmful and harmless prompts across languages. Compute the **Silhouette Score** per language to quantify how well the model separates the two categories in representation space.
+
+- **Input**: `unified/representation_dataset.json`
+- **Output**: Silhouette Score per language, PCA scatter plots
+- **Expected finding**: Non-English languages show lower Silhouette Scores than English
+
+### Experiment 2 — Toxic Concept Activation Strength (RQ2)
+
+Using JBShield's concept extraction framework, measure the activation strength of the toxic concept vector for each language. Compare against harmless prompts to compute a per-language activation gap.
+
+- **Input**: `unified/representation_dataset.json`
+- **Output**: Toxic concept activation scores per language
+
+### Experiment 3 — Hypothesis Validation (RQ3)
+
+Compute cross-lingual jailbreak success rates using MultiJail prompts. Run a correlation analysis across the three variables: toxic concept activation strength, Silhouette Score, and jailbreak success rate.
+
+- **Input**: `unified/representation_dataset.json`, `unified/jailbreak_dataset.json`
+- **Output**: Correlation matrix, scatter plots
+
+### Experiment 4 — Language-Adaptive Concept Enhancement (RQ4)
+
+Propose a language-adaptive scaling factor that amplifies toxic concept activation for non-English inputs at inference time, extending JBShield to the multilingual setting (JBShield-M).
+
+- **Input**: Concept vectors from Experiment 2, language-specific activation gaps
+- **Output**: Modified forward pass with per-language scaling
+
+### Experiment 5 — Evaluation and Baselines (RQ4)
+
+Evaluate JBShield-M against baselines across languages and models. Measure both **jailbreak success rate** (lower is better) and **false refusal rate** on harmless prompts (lower is better).
+
+| Baseline | Description |
+|----------|-------------|
+| No defence | Raw model without intervention |
+| JBShield (English only) | Original concept enhancement, no language adaptation |
+| Refusal vector addition | Direct addition of the universal refusal direction |
+
+- **Input**: `unified/jailbreak_dataset.json`, `unified/representation_dataset.json`
+- **Output**: Jailbreak success rate and false refusal rate per language per model
+
+---
+
+## Datasets
+
+| Dataset | Languages | Size | Role |
+|---------|-----------|------|------|
+| [PolyRefuse](https://github.com/McGill-NLP/polyrefuse) | 13 + EN | 27k records | Representation analysis (harmful + harmless) |
+| [MultiJail](https://github.com/DAMO-NLP-SG/MultiJail) | 10 | 442 prompts | Cross-lingual jailbreak evaluation |
+| [JBShield Data](https://github.com/ShengyiZhang/JBShield) | EN | 65k records | English baseline + 9 attack types |
+
+**Unified datasets** (generated by `data/build_dataset.py`):
+
+| File | Records | Used in |
+|------|---------|---------|
+| `unified/representation_dataset.json` | 27,395 | Exp 1, 2, 3 |
+| `unified/jailbreak_dataset.json` | 68,350 | Exp 3, 5 |
+
+**Focus languages**: English (baseline), Chinese, Arabic, Korean, Italian, Thai
+
+---
+
+## Models
+
+| Model | Parameters | Source |
+|-------|-----------|--------|
+| Llama-3-8B-Instruct | 8B | Used in all three reference papers |
+| Qwen2.5-7B-Instruct | 7B | Strong multilingual coverage, especially Chinese |
+
+---
+
+## Project Structure
+
+```
+related_work/
+├── data/
+│   ├── unified/                         Processed datasets (input to all experiments)
+│   │   ├── representation_dataset.json
+│   │   └── jailbreak_dataset.json
+│   ├── PolyRefuse/                      Raw PolyRefuse files
+│   ├── JBshieldData/                    Raw JBShield files
+│   ├── MultiJail.csv                    Raw MultiJail file
+│   ├── build_dataset.py                 Dataset consolidation script
+│   ├── exp1_extract_embeddings.py       Hidden state extraction
+│   └── exp1_silhouette.py               Silhouette Score computation + plots
+├── embeddings/                          Cached model embeddings (by model)
+├── results/                             Experiment outputs and figures
+└── papers/                              Reference papers
+```
+
+---
+
+## Getting Started
+
+**1. Install dependencies**
+```bash
+pip install torch transformers scikit-learn numpy matplotlib tqdm accelerate
+```
+
+**2. Build unified datasets**
+```bash
+cd data
+python build_dataset.py
+```
+
+**3. Run Experiment 1 (pipeline test with mock embeddings)**
+```bash
+python exp1_extract_embeddings.py --model mock
+python exp1_silhouette.py --model mock
+```
+
+**4. Run Experiment 1 with a real model** (requires GPU)
+```bash
+python exp1_extract_embeddings.py --model meta-llama/Meta-Llama-3-8B-Instruct
+python exp1_silhouette.py --model meta-llama/Meta-Llama-3-8B-Instruct
+```
+
+---
+
+## References
+
+- Zhang et al. (2025). *JBShield: Defending Large Language Models from Jailbreak Attacks through Activated Concept Analysis and Manipulation*. USENIX Security '25.
+- *(NeurIPS '25)* Refusal Direction is Universal across Languages.
+- Deng et al. (2023). *Multilingual Jailbreak Challenges in Large Language Models*. MultiJail.
+- Bhardwaj et al. (2024). *PolyRefuse: Multilingual Refusal Dataset*.

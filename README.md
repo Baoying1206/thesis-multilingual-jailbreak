@@ -1,114 +1,138 @@
+# Cross-Lingual Jailbreak Defense: Extending JBShield to the Multilingual Setting
 
 ## Overview
 
-Large language models (LLMs) are significantly more vulnerable to jailbreak attacks in non-English languages than in English. This project investigates *why* this disparity exists at the representation level, and proposes an inference-time intervention to mitigate it without retraining the model.
+Large language models (LLMs) are significantly more vulnerable to jailbreak attacks in non-English languages than in English. Prior work has established both the phenomenon and its mechanistic cause: safety alignment is primarily English-centric, and while the refusal direction is universal across languages, non-English inputs fail to generate sufficient signal along this shared direction — resulting in weaker harmful/harmless representation separation and higher jailbreak success rates.
 
-The core hypothesis is that **non-English prompts fail to sufficiently activate toxic concepts** in the model's internal representation space, leading to weaker separation between harmful and harmless content, and ultimately higher jailbreak success rates.
-
-This work bridges two recent findings:
-- **JBShield** (USENIX Security '25): jailbreaks suppress toxic concept activation and introduce a jailbreak concept in representation space
-- **Refusal Direction is Universal** (NeurIPS '25): refusal directions generalise across languages, but harmful/harmless embedding separation degrades in non-English settings
+However, no existing inference-time defense addresses this multilingual vulnerability. JBShield (USENIX Security '25) proposes an effective representation-level defense for English, but does not adapt to non-English inputs. This work extends JBShield to the multilingual setting by introducing a static language-adaptive scaling factor that compensates for the per-language signal deficit at inference time — without any model retraining.
 
 ---
 
-## Research Questions
+## Gap Being Filled
 
-**RQ1 — Phenomenon**
-> Does the separation between harmful and harmless representations in LLMs vary systematically across languages?
+| Work | Contribution | Limitation |
+|---|---|---|
+| MultiJail (ICLR '24) | Discovers cross-lingual jailbreak phenomenon | Solution requires fine-tuning |
+| Refusal Direction is Universal (NeurIPS '25) | Identifies mechanism: weak harmful/harmless separation in non-English; refusal direction is universal | No defense proposed |
+| JBShield (USENIX Security '25) | Inference-time defense via toxic/jailbreak concept manipulation | English only |
+| **This work** | Extends JBShield to multilingual setting via static language-adaptive scaling | — |
 
-**RQ2 — Mechanism**
-> Is toxic concept activation strength weaker in non-English languages, and how does it correlate with representation separation?
+---
 
-**RQ3 — Causal Validation**
-> Can toxic concept activation strength explain cross-lingual differences in jailbreak success rates?
+## Core Mechanism (from prior work)
 
-**RQ4 — Solution**
-> Can a language-adaptive toxic concept enhancement at inference time effectively reduce jailbreak success rates in non-English languages without degrading normal response quality?
+```
+LLM refusal relies on a universal refusal direction (shared across languages)
+                    ↓
+Non-English inputs produce weaker toxic concept activation
+→ Insufficient signal along the shared refusal direction
+→ Weaker harmful/harmless separation (lower Silhouette Score)
+                    ↓
+Jailbreak succeeds more easily in non-English languages
+```
+
+**Key evidence from literature:**
+- Refusal Direction is Universal: English Silhouette Scores consistently higher (e.g., 0.496 vs ~0.22 for non-English on Llama3.1-8B); refusal vectors are approximately parallel across languages
+- MultiJail: unsafe rate rises from <1% (English) to up to 28% (low-resource languages) on ChatGPT
+
+---
+
+## Our Approach: JBShield-M (Multilingual)
+
+At inference time, identify the input language and apply a pre-computed static scaling factor to amplify the toxic concept activation, compensating for the language-specific signal deficit along the universal refusal direction.
+
+**Scaling factor computation (pre-computed from validation set):**
+```
+gap_lang = mean_projection(harmful, EN) - mean_projection(harmful, lang)
+           [projection onto toxic concept vector vt]
+
+α_lang   = 1 + λ · (gap_lang / gap_max)     # λ is a tunable hyperparameter
+```
+
+**Modified forward pass (extends JBShield-M eq. 12):**
+```
+Ĥ_lt = H_lt + (α_lang · δt) · vt
+```
+
+where `δt` is JBShield's original English scaling factor, `α_lang` amplifies it for non-English inputs proportionally to their activation gap.
 
 ---
 
 ## Experimental Design
 
-```
-RQ1 → Silhouette Score analysis across languages
-  ↓
-RQ2 → Toxic concept activation extraction across languages
-  ↓
-RQ3 → Correlation: activation ↔ separation ↔ jailbreak success rate
-  ↓
-RQ4 → Language-adaptive concept enhancement + evaluation
-```
+### Preliminary Analysis (motivation validation, ~2 experiments)
 
-### Experiment 1 — Cross-lingual Representation Separation (RQ1)
+Reproduce prior findings in our specific model/data configuration to confirm the intervention target is correct. Not claimed as novel contributions.
 
-Extract hidden states from a target LLM for harmful and harmless prompts across languages. Compute the **Silhouette Score** per language to quantify how well the model separates the two categories in representation space.
+**P1 — Representation Separation Across Languages**
+Replicate Silhouette Score analysis on our dataset/model setup to confirm harmful/harmless separation degrades in non-English settings.
+- Input: `data/data/representation_dataset.json`
+- Output: Silhouette Score per language, PCA scatter plots
 
-- **Input**: `data/data/representation_dataset.json`
-- **Output**: Silhouette Score per language, PCA scatter plots
-- **Expected finding**: Non-English languages show lower Silhouette Scores than English
-
-### Experiment 2 — Toxic Concept Activation Strength (RQ2)
-
-Using JBShield's concept extraction framework, measure the activation strength of the toxic concept vector for each language. Compare against harmless prompts to compute a per-language activation gap.
-
-- **Input**: `data/data/representation_dataset.json`
-- **Output**: Toxic concept activation scores per language
-
-### Experiment 3 — Hypothesis Validation (RQ3)
-
-Compute cross-lingual jailbreak success rates using MultiJail prompts. Run a correlation analysis across the three variables: toxic concept activation strength, Silhouette Score, and jailbreak success rate.
-
-- **Input**: `data/data/representation_dataset.json`, `data/data/jailbreak_dataset.json`
-- **Output**: Correlation matrix, scatter plots
-
-### Experiment 4 — Language-Adaptive Concept Enhancement (RQ4)
-
-Propose a language-adaptive scaling factor that amplifies toxic concept activation for non-English inputs at inference time, extending JBShield to the multilingual setting (JBShield-M).
-
-- **Input**: Concept vectors from Experiment 2, language-specific activation gaps
-- **Output**: Modified forward pass with per-language scaling
-
-### Experiment 5 — Evaluation and Baselines (RQ4)
-
-Evaluate JBShield-M against baselines across languages and models. Measure both **jailbreak success rate** (lower is better) and **false refusal rate** on harmless prompts (lower is better).
-
-| Baseline | Description |
-|----------|-------------|
-| No defence | Raw model without intervention |
-| JBShield (English only) | Original concept enhancement, no language adaptation |
-| Refusal vector addition | Direct addition of the universal refusal direction |
-
-- **Input**: `unified/jailbreak_dataset.json`, `unified/representation_dataset.json`
-- **Output**: Jailbreak success rate and false refusal rate per language per model
+**P2 — Toxic Concept Activation Gap**
+Measure per-language toxic concept activation strength and projection onto the refusal direction. Compute the activation gap relative to English, which directly informs the scaling factor.
+- Input: `data/data/representation_dataset.json`
+- Output: Activation gap table per language; refusal direction projection values
 
 ---
 
-## Data source
+### Main Experiments (primary contributions)
+
+**Experiment 1 — Scaling Factor Computation and Validation**
+Compute static per-language scaling coefficients from the validation set activation gaps. Validate that the scaling factor correlates with jailbreak success rate across languages (i.e., languages with larger gaps receive larger corrections).
+- Input: Activation gaps from P2
+- Output: Scaling coefficient table; correlation between gap magnitude and jailbreak success rate
+
+**Experiment 2 — Jailbreak Defense Evaluation (Main Result)**
+Evaluate JBShield-M against baselines across languages and models on jailbreak success rate (ASR) and false refusal rate on harmless prompts.
+
+| Baseline | Description |
+|---|---|
+| No defence | Raw model without intervention |
+| JBShield (English scaling only) | Original δt applied uniformly, no language adaptation |
+| Refusal vector addition | Direct addition of the universal refusal direction (from Refusal Direction is Universal) |
+| SELF-DEFENCE | Fine-tuning based multilingual defense (from MultiJail) |
+| **JBShield-M (ours)** | Static language-adaptive toxic concept enhancement |
+
+- Input: `data/data/jailbreak_dataset.json`, `data/data/representation_dataset.json`
+- Output: ASR and false refusal rate per language per model
+
+**Experiment 3 — Ablation: Effect of Language Adaptation**
+Compare JBShield-M with and without the language-adaptive scaling (i.e., α_lang = 1 for all languages) to isolate the contribution of the multilingual extension.
+- Output: Per-language ASR with and without adaptation
+
+---
+
+## Data
 
 | Dataset | Languages | Size | Role |
-|---------|-----------|------|------|
-| [PolyRefuse](https://github.com/McGill-NLP/polyrefuse) | 13 + EN | 27k records | Representation analysis (harmful + harmless) |
-| [MultiJail](https://github.com/DAMO-NLP-SG/MultiJail) | 10 | 442 prompts | Cross-lingual jailbreak evaluation |
-| [JBShield Data](https://github.com/ShengyiZhang/JBShield) | EN | 65k records | English baseline + 9 attack types |
+|---|---|---|---|
+| PolyRefuse | 13 + EN | 27k records | Representation analysis (harmful + harmless) |
+| MultiJail | 10 | 442 prompts | Cross-lingual jailbreak evaluation |
+| JBShield Data | EN | 65k records | English baseline + 9 attack types |
 
-**experiment data** (generated by `data/build_dataset.py`):
+**Experiment data** (generated by `data/build_dataset.py`):
 
 | File | Records | Used in |
-|------|---------|---------|
-| `data/data/representation_dataset.json` | 27,395 | Exp 1, 2, 3 |
-| `data/data/jailbreak_dataset.json` | 68,350 | Exp 3, 5 |
+|---|---|---|
+| `data/data/representation_dataset.json` | 27,395 | P1, P2, Exp 1 |
+| `data/data/jailbreak_dataset.json` | 68,350 | Exp 2, 3 |
 
-**Focus languages**: English (baseline), Chinese, Arabic, Korean, Italian, Thai
+**Focus languages:** English (baseline), Chinese, Arabic, Korean, Italian, Thai
 
 ---
 
 ## Models
 
-| Model | Parameters | Source |
-|-------|-----------|--------|
+| Model | Parameters | Notes |
+|---|---|---|
 | Llama-3-8B-Instruct | 8B | Used in all three reference papers |
 | Qwen2.5-7B-Instruct | 7B | Strong multilingual coverage, especially Chinese |
 
+---
 
+## Expected Contributions
 
-
+1. First inference-time, training-free defense against cross-lingual jailbreaks
+2. Static language-adaptive scaling mechanism grounded in per-language activation gap analysis
+3. Empirical validation that the multilingual vulnerability can be mitigated at the representation level without degrading normal response quality

@@ -1,8 +1,7 @@
-# Cross-Lingual Jailbreak Defense: Extending JBShield to the Multilingual Setting
 
 ## Overview
 
-Large language models (LLMs) are significantly more vulnerable to jailbreak attacks in non-English languages than in English. Prior work has established both the phenomenon and its mechanistic cause: safety alignment is primarily English-centric, and while the refusal direction is universal across languages, non-English inputs fail to generate sufficient signal along this shared direction — resulting in weaker harmful/harmless representation separation and higher jailbreak success rates.
+Large language models (LLMs) are more vulnerable to jailbreak attacks in non-English languages than in English. Prior work has established both the phenomenon and its mechanistic cause: safety alignment is primarily English-centric, and while the refusal direction is universal across languages, non-English inputs fail to generate sufficient signal along this shared direction — resulting in weaker harmful/harmless representation separation and higher jailbreak success rates.
 
 However, no existing inference-time defense addresses this multilingual vulnerability. JBShield (USENIX Security '25) proposes an effective representation-level defense for English, but does not adapt to non-English inputs. This work extends JBShield to the multilingual setting by introducing a static language-adaptive scaling factor that compensates for the per-language signal deficit at inference time — without any model retraining.
 
